@@ -1,0 +1,77 @@
+name: Java CI - Maven Dependency Caching
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and cache (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      # Cache ~/.m2/repository; key is derived from OS and pom.xml.
+      - name: Set up JDK 25 and Maven cache
+        id: java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: 'maven'
+          cache-dependency-path: 'pom.xml'
+
+      # This line makes the cache hit/miss visible without parsing long logs.
+      - name: Show Maven cache status
+        shell: bash
+        env:
+          MAVEN_CACHE_HIT: ${{ steps.java.outputs.cache-hit }}
+          MAVEN_CACHE_KEY: ${{ steps.java.outputs.cache-primary-key }}
+        run: |
+          echo "RUN_NUMBER=${GITHUB_RUN_NUMBER}"
+          echo "RUNNER_OS=${RUNNER_OS}"
+          echo "MAVEN_CACHE_HIT=${MAVEN_CACHE_HIT:-false}"
+          echo "MAVEN_CACHE_KEY=${MAVEN_CACHE_KEY}"
+          if [[ "${MAVEN_CACHE_HIT}" == "true" ]]; then
+            echo "Cache restored: Maven dependencies can be reused."
+          else
+            echo "No exact Maven cache hit: this run will populate the cache."
+          fi
+
+      # Runs unit tests, packages JAR, and enforces JaCoCo 80% coverage.
+      - name: Maven clean verify
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Verify JAR and JaCoCo report
+        shell: bash
+        run: |
+          test -s target/mathutils-cache-1.0-SNAPSHOT.jar
+          test -s target/site/jacoco/index.html
+          jar tf target/mathutils-cache-1.0-SNAPSHOT.jar | grep -q '^com/practice/math/Main.class$'
+          echo 'JAR and JaCoCo HTML report are present.'
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mathutils-cache-jar-${{ matrix.os }}
+          path: target/mathutils-cache-1.0-SNAPSHOT.jar
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload JaCoCo HTML report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-report-${{ matrix.os }}
+          path: target/site/jacoco/
+          if-no-files-found: warn
+          retention-days: 14
